@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>City Racing v 1.0</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background-color: #fff;
+				color: #111;
+				margin: 0px;
+				overflow: hidden;
+				font-family: Monospace;
+				font-size: 13px;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+				text-align: center;
+			}
+
+			a {
+				color: #0080ff;
+				text-decoration: none;
+			}
+
+			a:hover {
+				color: #f00;
+			}
+
+			#footer { width: 100%; margin: 2em auto; text-align: center; position: absolute; bottom: 0 }
+			strong { color: red }
+
+			#stats { position: absolute; top:0; left: 0 }
+			#stats #fps { background: transparent !important }
+			#stats #fps #fpsText { color: #555 !important }
+			#stats #fps #fpsGraph { display: none }
+		</style>
+	</head>
+	<body>
+
+		<div id="container"></div>
+		<div id="info">
+			For 3D <a href="http://threejs.org" target="_blank">three.js</a> JS lib is used.<br/>
+		</div>
+		<script src="js/libs/three.js"></script>
+		<script src="js/ammo.js"></script>
+		<script src="js/controls/TrackballControls.js"></script>
+		
+		<script src="js/Car.js"></script>
+		<script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+	
+		
+
+		<script>
+//================Physics variables====================
+			'use strict';
+	
+			//variables for Ammo js functions
+			var tempVector3 = new Ammo.btVector3(0, 0, 0);
+			var dynamicsWorld, bodies = [], threeBodies = [], objName;
+			//ammo js box demo
+			var world, mass, body, shape, timeStep=1/60, geometry, material, mesh;
+//======================================
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+	
+			var camera, scene, renderer, dirLight, hemiLight, controls, ground_material;
+			scene = new THREE.Scene();
+
+			var clock = new THREE.Clock();
+			
+//====================================
+			var FOLLOW_CAMERA = false;
+
+			var MARGIN = 0;
+			var WIDTH = window.innerWidth || 2;
+			var HEIGHT = window.innerHeight || ( 2 + 2 * MARGIN );
+			var SCREEN_WIDTH = WIDTH;
+			var SCREEN_HEIGHT = HEIGHT - 2 * MARGIN;
+			var SHADOW_MAP_WIDTH = 1024, SHADOW_MAP_HEIGHT = 1024;
+
+			var container, stats;
+
+			var cameraTarget;
+			var renderTarget;
+
+			var cubeCamera;	
+			var mlib;
+
+			var ground, groundBasic;
+
+			var v = 0.9, vdir = 1;
+//==================================INITIALIZATION=======================================
+			init();
+			initAmmo();
+			animate();
+
+			function init() {
+			
+				container = document.getElementById( 'container' );
+
+				camera = new THREE.PerspectiveCamera( 50, window.innerWidth / window.innerHeight, 1, 100000 );
+				camera.position.set( 1000, 100, 1000 );
+				
+				cameraTarget = new THREE.Vector3();
+								
+				controls = new THREE.TrackballControls( camera );
+
+				controls.rotateSpeed = 1.0;
+				controls.zoomSpeed = 1.2;
+				controls.panSpeed = 0.8;
+
+				controls.noZoom = false;
+				controls.noPan = false;
+
+				controls.staticMoving = false;
+				controls.dynamicDampingFactor = 0.15;
+				   
+				// LIGHTS
+
+				hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 0.6 );
+				hemiLight.color.setHSV( 0.6, 0.75, 1 );
+				hemiLight.groundColor.setHSV( 0.095, 0.5, 1 );
+				//the light that is reflected form the gorund				
+				hemiLight.position.set( 0, 500, 0 );
+				scene.add( hemiLight );
+
+				//Creating Directional light to ligh up objects from above
+
+				dirLight = new THREE.DirectionalLight( 0xffffff, 1 );
+				dirLight.color.setHSV( 0.1, 0.1, 1 );
+				dirLight.position.set( -1, 1.75, 1 );
+				dirLight.position.multiplyScalar( 50 );
+				scene.add( dirLight );
+
+				dirLight.castShadow = true;
+
+				dirLight.shadowMapWidth = 2048;
+				dirLight.shadowMapHeight = 2048;
+
+				var d = 50;
+				//change the position of the directional light relative to the camera position
+				dirLight.shadowCameraLeft = -d;
+				dirLight.shadowCameraRight = d;
+				dirLight.shadowCameraTop = d;
+				dirLight.shadowCameraBottom = -d;
+
+				dirLight.shadowCameraFar = 10500;
+				dirLight.shadowBias = -0.0001;
+				dirLight.shadowDarkness = 0.35;
+					
+				// RENDERER
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+				
+				// STATS
+
+				stats = new Stats();
+				container.appendChild( stats.domElement );
+				
+				// CUBE CAMERA
+
+				cubeCamera = new THREE.CubeCamera( 1, 10000, 128 );
+				scene.add( cubeCamera );
+
+				// MATERIALS
+				
+				var cubeTarget = cubeCamera.renderTarget;		
+				
+				createScene();
+
+			} //==================End of THREE initialization========
+			
+			//===================initialize physics engine===========
+			function initAmmo(){
+				// Bullet-interfacing code
+
+				var collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+				var dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+				var overlappingPairCache = new Ammo.btDbvtBroadphase();
+				var solver = new Ammo.btSequentialImpulseConstraintSolver();
+				scene.world = new Ammo.btDiscreteDynamicsWorld(dispatcher, overlappingPairCache, solver, collisionConfiguration);
+				scene.world.setGravity(tVec(0, -50, 0));
+ 
+				//=========ammo js ground=====
+				var groundShape = new Ammo.btBoxShape(tVec(100000/2, 1/2, 100000/2));	//same like three geometry, but must be divided by 2 as it multiplied by 2 by ammo
+				var groundTransform = new Ammo.btTransform();
+				groundTransform.setIdentity();
+				//groundTransform.setOrigin(tVec(0, 0, 0)); //coressponds to three postition 
+				//and set according to three ground values
+				
+				var mass = 0;
+			    var localInertia = tVec(0, 0, 0);
+				 //inertia is a mass property how resistant it is to movement
+													//high enertia hard to rotate
+													//Restitution and friction can be set per object by supplying them to the btRigidBodyConstructionInfo object passed into the btRigidBody constructor
+			    localCreateRigidBody(mass, groundTransform, groundShape, localInertia, 'ground');
+				//====create ammo objects=======				
+				createAmmoThreeObj('sphere', 40, 'sphere5', 200, -25, -1900);
+				createAmmoThreeObj('cube', 40, 'cube2', 200, -25, -2100 );
+			}
+			function createAmmoThreeObj(type, mass, obj_ID, worldPossX, worldPossY, worldPossZ){
+				
+				var ammoShape, threeGeometry;
+				var material = 'images/wood.jpg';
+				var worldPossX = worldPossX;
+				var worldPossY = worldPossY;
+				var worldPossZ = worldPossZ;
+				
+				//====create ammo obj=======				
+				switch(type){
+				
+					case 'sphere':
+					  ammoShape = new Ammo.btSphereShape( 100/2 ); // object is Dim * 2 
+					  threeGeometry = new THREE.SphereGeometry( 100, 32, 16);					  					  
+					break;
+					
+					case 'cube':
+					  var ammoShape = new Ammo.btBoxShape(tVec( 1000/2, 50/2, 100/2 ));
+					  threeGeometry = new THREE.CubeGeometry( 1000, 50, 100);					  					  
+					break;
+					
+					default:
+					  //ammoShape = new Ammo.btBoxShape(tVec( 1000/2, 50/2, 100/2 )); // object is Dim * 2 
+				}
+				var mass = mass;
+				var startTransform = new Ammo.btTransform();
+				startTransform.setIdentity();	
+				
+				addObject( threeGeometry, material, worldPossX, worldPossY,worldPossZ, obj_ID );
+				localCreateRigidBody(mass, startTransform, ammoShape, 0, obj_ID);
+			}
+			function tVec(x,y,z){
+				tempVector3.setValue(x,y,z);
+				return tempVector3;
+			}
+			  
+			//create ammo js object and add it to the world
+			function localCreateRigidBody(mass, objTransform, objShape, localInertia, objName ){
+				if (localInertia == 0){
+					localInertia = tVec(0, 1, 0); //if localInertia not speficied def value is used
+				}
+				else
+				{
+					localInertia = localInertia
+				}
+				var threeX = threeBodies[objName].position.x;
+				var threeY = threeBodies[objName].position.y;
+				var threeZ = threeBodies[objName].position.z;
+				
+				//three js object.position.set( x, y, z );
+				objTransform.setOrigin(tVec(threeX, threeY, threeZ)); //coressponds to three postition
+				objShape.calculateLocalInertia(mass, localInertia);
+				var myMotionState = new Ammo.btDefaultMotionState(objTransform);
+				var rbInfo = new Ammo.btRigidBodyConstructionInfo(mass, myMotionState, objShape, localInertia);
+				rbInfo.set_m_friction (.7);	//does not effect match anything
+				rbInfo.set_m_restitution(.5);	//makes the object bounce			
+				var body = new Ammo.btRigidBody(rbInfo);				
+				scene.world.addRigidBody(body);
+				body.mesh = threeBodies[objName]; // Assign the Three.js mesh, 
+												  //this is used to update the model position later
+				bodies[objName] = body;	// Keep track of this box
+				
+			}			
+			//end ammo functions
+			
+			function createScene() {
+
+				// GROUND
+
+				var texture = THREE.ImageUtils.loadTexture( "textures/cube/Park3Med/ny.jpg" );
+				texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+				texture.repeat.set( 50, 50 );
+
+				groundBasic = new THREE.MeshBasicMaterial( { color: 0xffffff, map: texture } );
+				groundBasic.color.setHSV( 0.1, 0.45, 0.995 );
+
+				ground = new THREE.Mesh( new THREE.CubeGeometry( 100000, 1, 100000 ), groundBasic );
+				ground.position.y = - 215;
+				ground.rotation.x = - Math.PI / 2;					
+				ground.receiveShadow = true;
+				ground.useQuaternion = true;
+				threeBodies['ground'] = ground;
+				scene.add( ground );
+			
+				requestAnimationFrame( render );
+
+				// OBJECTS
+
+				var cylinderGeometry = new THREE.CylinderGeometry( 2, 50, 1000, 32);
+				var sphereGeometry = new THREE.SphereGeometry( 100, 32, 16);
+							
+				var material = 'images/wood.jpg';
+				addObject( cylinderGeometry, material, 1500, 650, 0, 'cylinder1' );
+				addObject( cylinderGeometry, material, -1500, 350, 0, 'cylinder2' );
+				addObject( cylinderGeometry, material, 0, 350, 1500, 'cylinder3' );
+				
+				addObject( sphereGeometry, material, 1500, -25, 200, 'sphere1' );
+				addObject( sphereGeometry, material, -1500, -25, 200, 'sphere2' );
+				addObject( sphereGeometry, material, 200, -25, 1500, 'sphere3' );
+
+		}
+
+			//
+
+			function addObject( geometry, material, x, y, z, objName) {
+
+				//=========three js================
+				var object_material = 
+				new THREE.MeshLambertMaterial({ map: THREE.ImageUtils.loadTexture( material ) });
+				object_material.map.wrapS = object_material.map.wrapT = THREE.RepeatWrapping;
+				object_material.map.repeat.set( .25, .25 );
+				
+				//=========three js end==================
+				
+				var object = new THREE.Mesh( geometry, object_material);
+				
+				object.position.set( x, y, z );
+				object.castShadow = true;
+				object.receiveShadow = true;
+				object.useQuaternion = true;
+				threeBodies[objName] = object;
+				scene.add( object );
+
+			}
+
+			//
+
+			function onWindowResize() {
+
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+
+				renderer.setSize( window.innerWidth, window.innerHeight );
+
+			}
+
+			function updateAmmoThreeObj() {
+				scene.world.stepSimulation( 1 / 60, 5 );
+				var transform = new Ammo.btTransform(), origin, rotation;				 
+				var key;					
+				 
+				for (key in bodies) {
+								
+					bodies[key].getMotionState().getWorldTransform( transform );					 
+					origin = transform.getOrigin();
+					bodies[key].mesh.position.x = origin.x();
+					bodies[key].mesh.position.y = origin.y();
+					bodies[key].mesh.position.z = origin.z();
+					 
+					rotation = transform.getRotation();
+					bodies[key].mesh.quaternion.x = rotation.x();
+					bodies[key].mesh.quaternion.y = rotation.y();
+					bodies[key].mesh.quaternion.z = rotation.z();
+					bodies[key].mesh.quaternion.w = rotation.w();
+				};
+			}
+			
+			function animate() {
+
+				requestAnimationFrame( animate );
+				// Run physics
+				updateAmmoThreeObj();
+				render();
+				stats.update();
+
+			}
+
+			function render() {
+
+				var delta = clock.getDelta();
+				controls.update();
+								
+				// render cube map
+
+				var updateCubemap = true;
+				
+				renderer.autoUpdateObjects = true;
+
+				camera.lookAt( cameraTarget );
+
+				renderer.clearTarget( null );				
+				//==================
+				renderer.render( scene, camera );				
+			}
+
+		</script>
+	</body>
+</html>
